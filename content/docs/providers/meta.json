@@ -1,0 +1,5 @@
+{
+  "title": "Providers",
+  "defaultOpen": true,
+  "pages": ["index", "google", "email-password"]
+}

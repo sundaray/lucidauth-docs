@@ -1,0 +1,11 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "about",
+    "authentication-strategy",
+    "installation",
+    "providers",
+    "error-handling",
+    "frameworks"
+  ]
+}
