@@ -1,0 +1,50 @@
+---
+title: User Session Duration
+---
+
+You can configure how long a user session remains valid using the `maxAge` property inside the `session` configuration object:
+
+```typescript
+import { lucidAuth } from "lucidauth/next-js";
+
+export const {
+  signIn,
+  signOut,
+  getUserSession,
+  extendUserSessionMiddleware,
+  handler,
+} = lucidAuth({
+  baseUrl: process.env.BASE_URL,
+  session: {
+    secret: process.env.SESSION_SECRET,
+    maxAge: 60 * 60 * 24 * 7, // 7 days [!code highlight]
+  },
+  providers: [
+    // providers
+  ],
+});
+```
+
+<Callout title="Note">
+  The `maxAge` value defines the duration in **seconds**. In the example above,
+  the user session is configured to remain valid for 7 days.
+</Callout>
+
+## Extending User Session
+
+LucidAuth supports **sliding expiration**. This means that as long as a user is active on your site, their session will be automatically extended, preventing them from being logged out unexpectedly.
+
+To enable this, you must return the `extendUserSessionMiddleware` function at the end of your Next.js middleware (`proxy.ts` in Next.js 16).
+
+```typescript title="proxy.ts"
+import { extendUserSessionMiddleware } from "@/auth";
+
+export async function proxy(request: NextRequest) {
+  // ... your custom logic (auth checks, redirects)
+
+  // Extend the user session for active users
+  return extendUserSessionMiddleware(request);
+}
+```
+
+If you do not use this function inside your middleware, the user session will have **absolute expiration**. This means the user will be forced to sign in again exactly after the `maxAge` duration (e.g., 7 days) passes, even if they are actively navigating the site at that moment.

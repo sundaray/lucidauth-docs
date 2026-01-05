@@ -1,0 +1,23 @@
+---
+title: User Session Strategy
+description: User session strategy supported by LucidAuth
+---
+
+Authentication libraries typically offer two user session strategies: **JWT** and **Database**.
+
+In the JWT strategy, user session information such as id, name, role, and expiry are stored in a JWT, which is stored in a cookie. In the Database strategy, user session information is stored in a database; the cookie stores only the session ID.
+
+The browser automatically sends the cookie with every request to the server. On the server, you extract the cookie from the request header. If the value stored is a JWT, you verify (or decrypt) it to get back the user session information. If the value stored is a session ID, you make a database call and fetch the user session information associated with that ID.
+
+Currently, LucidAuth supports **only the JWT user session strategy**. Specifically, it **uses encrypted JWTs** (JWE), making it **safe to store confidential information** in the user session.
+
+{/* prettier-ignore */}
+<Callout title="Note">
+  A JWT can be either signed or encrypted. 
+  
+  A signed JWT (JWS) ensures **integrity**. Its payload is readable by anyone, but cannot be modified
+  without invalidating the signature. 
+  
+  An encrypted JWT (JWE) ensures **both confidentiality and integrity**. Its payload is unreadable to everyone except
+  those possessing the correct decryption key, and any modification to the token will cause decryption to fail.
+</Callout>

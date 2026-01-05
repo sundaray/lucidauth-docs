@@ -1,0 +1,44 @@
+---
+title: Extending User
+description: How to extend the User type
+---
+
+Internally, LucidAuth defines a `BaseUser` interface with a standard set of properties:
+
+```typescript
+export interface BaseUser {
+  id?: string | null;
+  name?: string | null;
+  email?: string | null;
+  image?: string | null;
+  role?: string | null;
+}
+
+export interface User extends BaseUser {}
+```
+
+In your application, you might need additional properties available in the user session data. For example, let's say you have added a `subscriptionId` to your session payload so you can access it via `session.user.subscriptionId`.
+
+However, if you try to access this property in your code, TypeScript will show an error because `subscriptionId` is not defined in the default `BaseUser` interface.
+
+To resolve this, you can use a TypeScript feature called **module augmentation**. This allows you to "merge" your custom properties into the existing library definition.
+
+In your project root, create a file named `lucidauth.d.ts` and add the following code:
+
+```typescript title="lucidauth.d.ts"
+import "lucidauth/core/types";
+
+declare module "lucidauth/core/types" {
+  interface BaseUser {
+    subscriptionId?: string;
+  }
+}
+```
+
+What's happening here?
+
+First, we import the file where the `BaseUser` type is defined inside the library. Then, we use the `declare module` syntax to tell TypeScript that we are modifying that specific module.
+
+Inside the module, we re-declare the `BaseUser` interface with only the new properties. TypeScript automatically merges this definition with the original one inside the library.
+
+Now, `BaseUser` includes the `subscriptionId` property, and TypeScript knows it exists. As a result, accessing `session.user.subscriptionId` in your code will no longer trigger type errors.

@@ -2,10 +2,11 @@
   "title": "Documentation",
   "pages": [
     "about",
-    "authentication-strategy",
     "installation",
+    "user-session",
     "providers",
     "error-handling",
+    "typescript",
     "frameworks"
   ]
 }

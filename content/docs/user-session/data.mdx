@@ -1,0 +1,37 @@
+---
+title: User Session Data
+---
+
+You can retrieve the current user's session data **on the server** using the `getUserSession` function:
+
+```typescript
+import { getUserSession } from "@/auth";
+
+const session = await getUserSession();
+```
+
+If you only need to access the user data, you can destructure the `user` object directly from the response:
+
+```typescript
+const { user } = await getUserSession();
+```
+
+## Caching User Session Data
+
+In a typical Next.js application, you often have multiple Server Components on a single page that require user session data (e.g., a NavBar, a Sidebar, and a Profile component).
+
+If you call `getUserSession` directly in each of these components, the function runs multiple times during a single page request. Each time, the session is extracted, verified, and decrypted from scratch. This is redundant and inefficient.
+
+To solve this, you can use React's [cache](https://react.dev/reference/react/cache) helper to create a cached version of the `getUserSession` function. Here's an example:
+
+```typescript
+import { cache } from "react";
+import { getUserSession } from "@/auth";
+
+export const getSession = cache(async () => {
+  const session = await getUserSession();
+  return session;
+});
+```
+
+When `getSession` is called for the first time during a request, it retrieves the user session and stores it in a cache. Any subsequent call to `getSession` during that same request returns the cached result. The cache resets automatically when the request completes.
