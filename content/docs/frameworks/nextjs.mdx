@@ -1,4 +1,544 @@
 ---
 title: Next.js
-description: Using LucidAuth with Next.js
+description: Implementing Google and email/password authentication in Next.js
 ---
+
+Follow the steps below to implement Google and email/password authentication in your Next.js app.
+
+## Prerequisites
+
+To implement Google OAuth, you need to obtain Google OAuth 2.0 credentials for your application. For instructions on how to do this, refer to the [Google OAuth provider guide](/providers/google).
+
+## Installation
+
+Run the following command to install `lucidauth`:
+
+```bash
+npm install lucidauth
+```
+
+## Setting Up Environment Variables
+
+Create a `.env.local` file at the root of your project and add the following environment variables.
+
+```bash
+# The base URL of your application
+BASE_URL="http://localhost:3000"
+
+# A 32-byte random string encoded in Base64, used to sign and encrypt session tokens
+SESSION_SECRET="generated-secret-here"
+
+# Google OAuth Credentials
+GOOGLE_CLIENT_ID="your-google-client-id"
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
+```
+
+You can generate a secure `SESSION_SECRET` by running the following command in your terminal:
+
+```bash
+openssl rand -base64 32
+```
+
+## Creating an Auth Configuration File
+
+Create a file named `auth.ts` in the root of your project and add the following code:
+
+```typescript title="auth.ts"
+import { lucidAuth } from "lucidauth/next-js";
+import { Google } from "lucidauth/providers/google";
+import { Credential } from "lucidauth/providers/credential";
+
+import {
+  createGoogleUser,
+  createCredentialUser,
+  getCredentialUser,
+  checkCredentialUserExists,
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  updatePassword,
+  sendPasswordUpdateEmail,
+} from "@/lib/auth/callbacks";
+
+export const {
+  signIn,
+  signUp,
+  signOut,
+  getUserSession,
+  forgotPassword,
+  resetPassword,
+  extendUserSessionMiddleware,
+  handler,
+} = lucidAuth({
+  baseUrl: process.env.BASE_URL!,
+  session: {
+    secret: process.env.SESSION_SECRET!,
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+  },
+  providers: [
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      prompt: "select_account",
+      onAuthentication: {
+        createGoogleUser,
+        // Customize these paths based on your app's routes
+        redirects: {
+          error: "/sign-in/error",
+        },
+      },
+    }),
+    Credential({
+      onSignUp: {
+        checkCredentialUserExists,
+        sendVerificationEmail,
+        createCredentialUser,
+        // Customize these paths based on your app's routes
+        redirects: {
+          signUpSuccess: "/signup/check-email",
+          emailVerificationSuccess: "/signup/success",
+          emailVerificationError: "/signup/error",
+        },
+      },
+      onSignIn: {
+        getCredentialUser,
+      },
+      onPasswordReset: {
+        checkCredentialUserExists,
+        sendPasswordResetEmail,
+        updatePassword,
+        sendPasswordUpdateEmail,
+        // Customize these paths based on your app's routes
+        redirects: {
+          forgotPasswordSuccess: "/forgot-password/check-email",
+          tokenVerificationSuccess: "/reset-password",
+          tokenVerificationError: "/forgot-password/error",
+          resetPasswordSuccess: "/reset-password/success",
+        },
+      },
+    }),
+  ],
+});
+```
+
+To keep your auth configuration file uncluttered, define the callback functions in a separate file, such as `lib/auth/callbacks.ts`:
+
+```typescript title="lib/auth/callbacks.ts"
+import type {
+  CheckCredentialUserExistsParams,
+  CreateCredentialUserParams,
+  CreateGoogleUserParams,
+  GetCredentialUserParams,
+  SendPasswordResetEmailParams,
+  SendPasswordUpdateEmailParams,
+  SendVerificationEmailParams,
+  UpdatePasswordParams,
+  CheckCredentialUserExistsReturn,
+  CreateGoogleUserReturn,
+  GetCredentialUserReturn,
+} from "lucidauth/core/types";
+
+export async function checkCredentialUserExists({
+  email,
+}: CheckCredentialUserExistsParams): Promise<CheckCredentialUserExistsReturn> {
+  // Query your database to check if a user with this email
+  // already has a credential-based account.
+}
+
+export async function sendVerificationEmail({
+  email,
+  url,
+}: SendVerificationEmailParams): Promise<void> {
+  // Use your email service to send the email verification link.
+}
+
+export async function createCredentialUser({
+  email,
+  hashedPassword,
+}: CreateCredentialUserParams): Promise<void> {
+  // Create the user and their credential account in your database.
+}
+
+export async function getCredentialUser({
+  email,
+}: GetCredentialUserParams): Promise<GetCredentialUserReturn> {
+  // Query your database for the user and return their details.
+  // Return null if the user is not found.
+}
+
+export async function createGoogleUser(
+  userClaims: CreateGoogleUserParams
+): Promise<CreateGoogleUserReturn> {
+  // Find or create a user in your database using the claims from Google.
+  // Return the user object to be stored in the session.
+}
+
+export async function sendPasswordResetEmail({
+  email,
+  url,
+}: SendPasswordResetEmailParams): Promise<void> {
+  // Use your email service to send the password reset link.
+}
+
+export async function updatePassword({
+  email,
+  hashedPassword,
+}: UpdatePasswordParams): Promise<void> {
+  // Update the user's password in your database.
+}
+
+export async function sendPasswordUpdateEmail({
+  email,
+}: SendPasswordUpdateEmailParams): Promise<void> {
+  // Use your email service to send a confirmation
+  // that the password was changed.
+}
+```
+
+I recommend importing and using the utility types from `lucidauth/core/types` to annotate your callback functions. This ensures you know exactly what parameters you have access to and what values you must return from each callback.
+
+## Adding the Route Handler
+
+Create a file at `app/api/auth/[...lucidauth]/route.ts` and add the following code:
+
+```typescript title="app/api/auth/[...lucidauth]/route.ts"
+import { handler } from "@/auth";
+
+export { handler as GET, handler as POST };
+```
+
+<Callout type="warn" title="Important">
+
+You must import and export the `handler` at this exact path: `/app/api/auth/[...lucidauth]/route.ts`.
+
+LucidAuth requires this specific endpoint structure to handle OAuth callbacks and generate the correct URLs for email verification and password resets.
+
+</Callout>
+
+## Creating Server Actions
+
+Inside your `app` directory, create a file named `actions.ts` and add the following Server Actions.
+
+Before we look at them, note that each action uses a `rethrowIfRedirect` function. LucidAuth internally uses Next.js's `redirect` function, which throws a `NEXT_REDIRECT` error. You must catch and re-throw this error. Otherwise, the redirect will fail.
+
+Create a file at `lib/auth/next-redirect.ts` and ad the following code:
+
+```typescript title="lib/auth/next-redirect.ts"
+function isRedirectError(error: unknown): error is Error & { digest: string } {
+  return (
+    error instanceof Error &&
+    "digest" in error &&
+    typeof error.digest === "string" &&
+    error.digest.startsWith("NEXT_REDIRECT")
+  );
+}
+
+export function rethrowIfRedirect(error: unknown): void {
+  if (isRedirectError(error)) {
+    throw error;
+  }
+}
+```
+
+Now let's look at each Server Action.
+
+### Sign in with Google
+
+```typescript title="app/actions.ts"
+"use server";
+
+import { signIn, signUp, signOut, forgotPassword, resetPassword } from "@/auth";
+import { LucidAuthError } from "lucidauth/core/errors";
+import { rethrowIfRedirect } from "@/lib/auth/next-redirect";
+
+export async function signInWithGoogle() {
+  try {
+    await signIn("google", { redirectTo: "/dashboard" });
+  } catch (error) {
+    rethrowIfRedirect(error);
+
+    console.log("signInWithGoogle error: ", error);
+
+    if (error instanceof LucidAuthError) {
+      return { error: "Google sign-in failed. Please try again." };
+    }
+    return { error: "Something went wrong. Please try again." };
+  }
+}
+```
+
+### Sign up with email and password
+
+```typescript title="app/actions.ts"
+export async function signUpWithEmailAndPassword(data: {
+  email: string;
+  password: string;
+}) {
+  // Validate your form data
+
+  try {
+    await signUp({
+      email: data.email,
+      password: data.password,
+    });
+  } catch (error) {
+    rethrowIfRedirect(error);
+
+    console.log("signUpWithEmailAndPassword error: ", error);
+
+    if (error instanceof LucidAuthError) {
+      switch (error.name) {
+        case "AccountAlreadyExistsError":
+          return {
+            error: "An account with this email already exists. Please sign in.",
+          };
+        default:
+          return { error: "Sign-up failed. Please try again." };
+      }
+    }
+    return { error: "Something went wrong. Please try again." };
+  }
+}
+```
+
+If a user attempts to sign up with an email address that is already registered, LucidAuth throws an `AccountAlreadyExistsError`. You should check for this specific error in your `catch` block to return a user-friendly message, as demonstrated above.
+
+### Sign in with email & password
+
+```typescript title="app/actions.ts"
+export async function signInWithEmailAndPassword(data: {
+  email: string;
+  password: string;
+}) {
+  // Validate your form data
+
+  try {
+    await signIn("credential", {
+      email: data.email,
+      password: data.password,
+      redirectTo: "/dashboard",
+    });
+  } catch (error) {
+    rethrowIfRedirect(error);
+
+    console.log("signInWithEmailAndPassword error: ", error);
+
+    if (error instanceof LucidAuthError) {
+      switch (error.name) {
+        case "AccountNotFoundError":
+          return { error: "No account found with this email. Please sign up." };
+        case "InvalidCredentialsError":
+          return { error: "Invalid email or password." };
+        default:
+          return { error: "Sign-in failed. Please try again." };
+      }
+    }
+    return { error: "Something went wrong. Please try again." };
+  }
+}
+```
+
+When a user signs in, they might enter an unregistered email (attempting to sign in without signing up) or enter the wrong password. LucidAuth throws `AccountNotFoundError` and `InvalidCredentialsError` respectively for these scenarios. You can check for these errors inside the `catch block` and return user-friendly messages.
+
+### Sign out
+
+```typescript title="app/actions.ts"
+export async function signOutAction() {
+  try {
+    await signOut({ redirectTo: "/" });
+  } catch (error) {
+    rethrowIfRedirect(error);
+
+    console.log("signOut error: ", error);
+
+    return { error: "Something went wrong. Please try again." };
+  }
+}
+```
+
+When a user submits the Forgot Password form, a password reset email is sent **only** if the email is registered. If the email is unregistered, no email is sent.
+
+However, in both scenarios, LucidAuth redirects the user to the `forgotPasswordSuccess`, as defined in the `redirects` object within the `onPasswordReset` configuration of your `auth.ts` file.
+
+By treating both scenarios as the success case, LucidAuth prevents email enumeration attacks, denying attackers the ability to verify if an email address is registered in your system.
+
+### Reset password
+
+```typescript title="app/actions.ts"
+export async function resetPasswordAction(token: string, password: string) {
+  // Validate your form data
+
+  try {
+    await resetPassword(token, password);
+  } catch (error) {
+    rethrowIfRedirect(error);
+
+    console.log("resetPassword error: ", error);
+
+    if (error instanceof LucidAuthError) {
+      switch (error.name) {
+        case "InvalidPasswordResetTokenError":
+          return {
+            error:
+              "Invalid password reset token. Please request a new password reset link.",
+          };
+        case "ExpiredPasswordResetTokenError":
+          return {
+            error:
+              "Password reset token has expired. Please request a new password reset link.",
+          };
+        default:
+          return {
+            error: "Failed to reset password. Please try again.",
+          };
+      }
+    }
+    return { error: "Something went wrong. Please try again." };
+  }
+}
+```
+
+#### Retrieving the password reset token
+
+Notice that the `resetPassword` function requires a `token` argument. This is the password reset token, but where do you get it from?
+
+When a user clicks the password reset link in their email, LucidAuth validates the request and redirects them to the `tokenVerificationSuccess` page, as defined in the `redirects` object within the `onPasswordReset` configuration of your `auth.ts` file. In this redirection URL, LucidAuth appends the token as a query parameter:
+
+```text
+https://yourapp.com/reset-password?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+You should extract this token on your Reset Password page using Next.js's `useSearchParams` hook and pass it to the `resetPassword` function along with the new password.
+
+#### Handling password reset token errors
+
+After a password reset email is sent, the included reset token remains valid for 30 minutes. When the user clicks the link, they are redirected to your Password Reset form to enter a new password and submit the form.
+
+During the form submission, two error can occur:
+
+- **Token expiration**: If the user clicks the password reset link after the 30-minute window has passed, the token is no longer valid. In this scenario, LucidAuth throws an `ExpiredPasswordResetTokenError`.
+
+- **Token tampering**: If the user manually copies the link (assuming you provided a raw reset link in your email) but modifies the token string or enters a random URL, the token validation will fail. In this case, LucidAuth throws an `InvalidPasswordResetTokenError`.
+
+You should check for these specific errors inside your `catch` block to provide clear feedback, prompting the user to request a new password reset link if necessary.
+
+## Accessing User Session in Server Components
+
+```typescript
+import { getUserSession } from "@/auth";
+
+export default async function ServerPage() {
+  const session = await getUserSession();
+
+  return <p>{session?.user.email}</p>;
+}
+```
+
+## Accessing User Session in Client Components
+
+```typescript
+"use client";
+
+import { useUserSession } from "lucidauth/react";
+
+export default function ClientPage() {
+  const { isLoading, isError, isAuthenticated, session } = useUserSession();
+
+  if (isLoading) {
+    return <p>Loading...</p>;
+  }
+
+  if (isError) {
+    return <p>Error fetching user session.</p>;
+  }
+
+  if (!isAuthenticated) {
+    return <p>Please sign in.</p>;
+  }
+
+  return <p>{session?.user.email}</p>;
+}
+```
+
+## Extending User Session
+
+Create a file named `proxy.ts` in the root of your project and add the following code:
+
+```typescript title="proxy.ts"
+import { extendUserSessionMiddleware } from "@/auth";
+
+export { extendUserSessionMiddleware as proxy };
+
+export const config = {
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$|api/auth).*)",
+  ],
+};
+```
+
+<Callout title="Note">
+  In Next.js 16, middleware was renamed to proxy. The `proxy.ts` file serves the
+  same purpose as the previous `middleware.ts` file.
+</Callout>
+
+## Protecting Routes in Proxy
+
+Since `getUserSession` validates the authenticity of the user session token, you can use it inside your `proxy.ts` (middleware) to control access to specific routes.
+
+Here is an example of how to implement route protection:
+
+```typescript title="proxy.ts"
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { getUserSession, extendUserSessionMiddleware } from "@/auth";
+
+const protectedRoutes = ["/admin", "/dashboard"];
+const authRoutes = ["/signin", "/forgot-password", "/reset-password"];
+
+export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const session = await getUserSession();
+
+  const isProtectedRoute = protectedRoutes.some((route) =>
+    pathname.startsWith(route)
+  );
+
+  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
+
+  // Redirect unauthenticated users away from protected routes
+  if (!session && isProtectedRoute) {
+    const signInUrl = new URL("/signin", request.url);
+    signInUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(signInUrl);
+  }
+
+  // Redirect authenticated users away from auth routes
+  if (session && isAuthRoute) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  // Extend session for active users
+  return extendUserSessionMiddleware(request);
+}
+
+export const config = {
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$|api/auth).*)",
+  ],
+};
+```
+
+For a detailed explanation of how `extendUserSessionMiddleware` works, please refer to the [User Session Duration](/user-session/duration) guide.
+
+In this example, we handle two specific scenarios before allowing the request to proceed:
+
+- **Unauthenticated users accessing protected routes**: When a user who isn't signed in tries to visit a protected route (e.g., `/dashboard`), we redirect them to the sign-in page. We also append the `next` query parameter to the URL. This preserves their original destination, allowing you to redirect them back after a successful sign-in.
+
+- **Authenticated users accessing auth routes**: A user who is already signed in does not need to access pages such as `/signin` or `/forgot-password`. In this case, we redirect them to the home page for a better user experience.
+
+For all other requests, the proxy simply calls `extendUserSessionMiddleware` to refresh the session for active users and allows the request to continue.
+
+<Callout title="Handling redirects">
+  You can use the `next` parameter (which holds the user's original destination) as the value for the `redirectTo` property in your `signIn` function.
+  
+  For example: `signIn('credential', { redirectTo: next })`. This ensures users are returned to the correct page after logging in.
+</Callout>
